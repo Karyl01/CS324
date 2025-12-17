@@ -4,6 +4,14 @@ import torch
 import torch.nn as nn
 import mediapipe as mp
 
+import random
+
+KEY_TO_GESTURE = {
+    ord('1'): 'fist',    # 石头
+    ord('2'): 'peace',   # 剪刀
+    ord('3'): 'palm',    # 布
+}
+
 # =========================
 # 1. MLP 模型（必须与训练一致）
 # =========================
@@ -61,6 +69,10 @@ def main():
 
     model, scaler_mean, scaler_scale, labels = load_model(MODEL_PATH)
 
+    player_gesture = None
+    computer_gesture = None
+    game_result = None
+
     mp_hands = mp.solutions.hands
     mp_draw = mp.solutions.drawing_utils
 
@@ -91,6 +103,23 @@ def main():
 
             cv2.putText(frame, "Press 'p' to predict, 'q' to quit",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+            y0 = 70
+            cv2.putText(frame, "Rock Paper Scissors", (10, y0),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
+            if player_gesture:
+                cv2.putText(frame, f"Player: {player_gesture}", (10, y0 + 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            if computer_gesture:
+                cv2.putText(frame, f"Computer: {computer_gesture}", (10, y0 + 80),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+            if game_result:
+                cv2.putText(frame, f"Result: {game_result}", (10, y0 + 120),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
             cv2.imshow("Gesture Recognition", frame)
 
             key = cv2.waitKey(1) & 0xFF
@@ -112,11 +141,30 @@ def main():
                 pred_text = f"{labels[idx]} ({conf:.2f})" if conf >= CONF_THRESHOLD else f"none ({conf:.2f})"
                 print("Prediction:", pred_text)
 
+                label = labels[idx]
+                if conf >= CONF_THRESHOLD and label in ["fist", "peace", "palm"]:
+                    player_gesture = label
+                    computer_gesture = random.choice(["fist", "peace", "palm"])
+                    game_result = judge_rps(player_gesture, computer_gesture)
+                else:
+                    player_gesture = None
+                    game_result = "Unrecognized"
+
             if key == ord("q"):
                 break
 
     cap.release()
     cv2.destroyAllWindows()
+
+def judge_rps(player, computer):
+    if player == computer:
+        return "Draw"
+    if (player == "fist" and computer == "peace") or \
+       (player == "peace" and computer == "palm") or \
+       (player == "palm" and computer == "fist"):
+        return "You Win"
+    return "Computer Wins"
+
 
 if __name__ == "__main__":
     main()
