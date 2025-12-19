@@ -15,26 +15,23 @@ TARGET_FPS = 30
 COIN_COUNT = 2
 OBSTACLE_COUNT = 2
 
-# 速度（像素/秒）——你说偏快，我这里整体降了一档
-SHIP_SPEED = 170          # 原来 220 -> 170（更稳）
-COIN_SPEED = 190          # 原来 240 -> 190
-OBSTACLE_SPEED_MIN = 170  # 原来 220 -> 170
-OBSTACLE_SPEED_MAX = 280  # 原来 360 -> 280
+SHIP_SPEED = 180
+COIN_SPEED = 180
+OBSTACLE_SPEED_MIN = 150
+OBSTACLE_SPEED_MAX = 260
 
 INIT_LIVES = 5
 GAME_SECONDS = 30
 
 CONF_THRESHOLD = 0.5
 
-# 防抖
 ACTION_CONFIRM_FRAMES = 2
 START_CONFIRM_FRAMES = 3
-FIST_CONFIRM_FRAMES = 10   # 你已经改成 10
+FIST_CONFIRM_FRAMES = 10
 
 START_GESTURE = "ok"
 QUIT_GESTURE = "fist"
 
-# stop 不是暂停游戏，只是让飞机不动
 GESTURE_TO_ACTION = {
     "like": -1,
     "dislike": 1,
@@ -46,6 +43,7 @@ GESTURE_TO_ACTION = {
 # 摄像头预览窗口
 PREVIEW_W, PREVIEW_H = 200, 150
 PREVIEW_MARGIN = 10
+
 
 # =========================
 # 模型
@@ -66,14 +64,17 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+
 def preprocess_landmarks(lm_21x3, eps=1e-6):
     out = lm_21x3.astype(np.float32)
     out -= out[0]  # wrist
     scale = max(np.linalg.norm(out[9]), eps)
     return (out / scale).reshape(-1)
 
+
 def standardize(feat, mean, scale, eps=1e-12):
     return (feat - mean) / (scale + eps)
+
 
 def load_model(path):
     # bundle = torch.load(path, map_location="cpu")
@@ -86,11 +87,13 @@ def load_model(path):
     labels = bundle["labels"]
     return model, scaler_mean, scaler_scale, labels
 
+
 # =========================
 # 生成对象
 # =========================
 def spawn_coin(W, H, offset_x=0):
     return {"x": float(W + offset_x), "y": float(random.randint(40, H - 40))}
+
 
 def spawn_obstacle(W, H):
     r = random.randint(12, 22)
@@ -101,6 +104,7 @@ def spawn_obstacle(W, H):
         "v": float(random.randint(OBSTACLE_SPEED_MIN, OBSTACLE_SPEED_MAX)),
         "cooldown": 0
     }
+
 
 def reset_round(W, H):
     st = {}
@@ -116,27 +120,35 @@ def reset_round(W, H):
     st["score"] = 0
     st["lives"] = INIT_LIVES
 
-    # 飞机动作（只影响飞机，不影响游戏）
     st["last_action"] = 0
     st["candidate_action"] = None
     st["candidate_count"] = 0
-
     return st
+
 
 def action_name(a: int) -> str:
     return "UP" if a == -1 else ("DOWN" if a == 1 else "STOP")
+
+
+# =========================
+# UI 小工具：居中画多行
+# =========================
+def draw_center_lines(screen, lines, center_x, top_y, gap=8):
+    """
+    lines: list of (font, text, color)
+    """
+    y = top_y
+    for fnt, txt, color in lines:
+        surf = fnt.render(txt, True, color)
+        screen.blit(surf, (center_x - surf.get_width() // 2, y))
+        y += surf.get_height() + gap
+
 
 # =========================
 # 主程序
 # =========================
 def main():
     model, scaler_mean, scaler_scale, labels = load_model("saved_model/best_mlp_nosklearn.pt")
-
-    # 标签一致性检查（避免“OK不生效”这种隐藏bug）
-    if START_GESTURE not in labels:
-        raise RuntimeError(f"模型 labels 中没有 '{START_GESTURE}'，请检查标签名。")
-    if QUIT_GESTURE not in labels:
-        raise RuntimeError(f"模型 labels 中没有 '{QUIT_GESTURE}'，请检查标签名。")
 
     pygame.init()
     WIDTH, HEIGHT = 640, 480
@@ -158,16 +170,13 @@ def main():
 
     mp_hands = mp.solutions.hands
 
-    # 状态：只有 WAIT_START / RUN / GAME_OVER（不再有“暂停整局”）
     st = reset_round(WIDTH, HEIGHT)
-    state = "WAIT_START"
+    state = "WAIT_START"  # WAIT_START / RUN / GAME_OVER
     start_ticks = None
 
-    # 防抖计数
     ok_count = 0
     fist_count = 0
 
-    # 显示用
     last_label = None
     last_conf = 0.0
     preview_surface = None
@@ -195,7 +204,7 @@ def main():
                 rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
                 preview_surface = pygame.surfarray.make_surface(np.transpose(rgb_small, (1, 0, 2)))
 
-                # 手势识别
+                # 手势识别（原图）
                 rgb = cv2.cvtColor(frame_flip, cv2.COLOR_BGR2RGB)
                 result = hands.process(rgb)
 
@@ -217,7 +226,7 @@ def main():
 
             last_label, last_conf = label, conf
 
-            # ===== OK 开始 / 重开（防抖）=====
+            # ===== OK 防抖 =====
             def ok_confirmed():
                 nonlocal ok_count
                 if label == START_GESTURE:
@@ -226,10 +235,8 @@ def main():
                     ok_count = 0
                 return ok_count >= START_CONFIRM_FRAMES
 
-            # ===== FIST 退出（只允许在：WAIT_START / GAME_OVER / 飞机STOP时）=====
-            # 你要求“退出只在飞机停止时可用”，这里严格按 last_action==0 控制
+            # ===== FIST 退出：仅 WAIT/GAME_OVER 或 飞机STOP =====
             allow_quit = (state in ("WAIT_START", "GAME_OVER")) or (st["last_action"] == 0)
-
             if allow_quit and label == QUIT_GESTURE:
                 fist_count += 1
                 if fist_count >= FIST_CONFIRM_FRAMES:
@@ -239,7 +246,6 @@ def main():
 
             # ===== 状态机 =====
             if state == "WAIT_START":
-                # 开始前整局不动（但画面在）
                 if ok_confirmed():
                     st = reset_round(WIDTH, HEIGHT)
                     start_ticks = pygame.time.get_ticks()
@@ -254,7 +260,7 @@ def main():
                     state = "GAME_OVER"
                     ok_count = 0
                 else:
-                    # 1) 更新飞机动作（只影响飞机）
+                    # 动作更新
                     if label in GESTURE_TO_ACTION:
                         new_action = GESTURE_TO_ACTION[label]
                         if new_action == st["last_action"]:
@@ -266,30 +272,28 @@ def main():
                             else:
                                 st["candidate_action"] = new_action
                                 st["candidate_count"] = 1
-
                             if st["candidate_count"] >= ACTION_CONFIRM_FRAMES:
                                 st["last_action"] = new_action
                                 st["candidate_action"] = None
                                 st["candidate_count"] = 0
 
-                    # 2) 飞机位置 dt 更新
+                    # 飞机 dt 更新
                     st["ship_y"] += st["last_action"] * SHIP_SPEED * dt
                     st["ship_y"] = np.clip(st["ship_y"], st["SHIP_HH"], HEIGHT - st["SHIP_HH"])
 
-                    # 3) 金币 dt 更新（游戏一直跑）
+                    # 金币 dt 更新
                     for coin in st["coins"]:
                         coin["x"] -= COIN_SPEED * dt
                         if coin["x"] < 0:
                             coin["x"] = float(WIDTH)
                             coin["y"] = float(random.randint(40, HEIGHT - 40))
-
                         if (abs(st["ship_x"] - coin["x"]) < st["SHIP_HW"] + st["REWARD_R"] and
-                            abs(st["ship_y"] - coin["y"]) < st["SHIP_HH"] + st["REWARD_R"]):
+                                abs(st["ship_y"] - coin["y"]) < st["SHIP_HH"] + st["REWARD_R"]):
                             st["score"] += 1
                             coin["x"] = float(WIDTH)
                             coin["y"] = float(random.randint(40, HEIGHT - 40))
 
-                    # 4) 障碍 dt 更新（游戏一直跑）
+                    # 障碍 dt 更新
                     for ob in st["obstacles"]:
                         ob["x"] -= ob["v"] * dt
                         if ob["x"] < -60:
@@ -300,13 +304,12 @@ def main():
 
                         if ob["cooldown"] == 0:
                             if (abs(st["ship_x"] - ob["x"]) < st["SHIP_HW"] + ob["r"] and
-                                abs(st["ship_y"] - ob["y"]) < st["SHIP_HH"] + ob["r"]):
+                                    abs(st["ship_y"] - ob["y"]) < st["SHIP_HH"] + ob["r"]):
                                 st["lives"] -= 1
                                 ob["cooldown"] = 15
                                 ob.update(spawn_obstacle(WIDTH, HEIGHT))
 
             elif state == "GAME_OVER":
-                # 结束后 OK 重开
                 if ok_confirmed():
                     st = reset_round(WIDTH, HEIGHT)
                     start_ticks = pygame.time.get_ticks()
@@ -345,42 +348,50 @@ def main():
             screen.blit(font.render(f"Time: {remaining}s", True, (255, 255, 255)), (10, 66))
             screen.blit(font.render(f"FPS: {fps:.1f}", True, (255, 255, 0)), (10, 94))
 
-            # 右下角预览 + label/action
+            # 右下角摄像头预览（始终显示）
+            px = WIDTH - PREVIEW_W - PREVIEW_MARGIN
+            py = HEIGHT - PREVIEW_H - PREVIEW_MARGIN
             if preview_surface is not None:
-                px = WIDTH - PREVIEW_W - PREVIEW_MARGIN
-                py = HEIGHT - PREVIEW_H - PREVIEW_MARGIN
                 screen.blit(preview_surface, (px, py))
-                pygame.draw.rect(screen, (255, 255, 255), (px, py, PREVIEW_W, PREVIEW_H), 2)
+            pygame.draw.rect(screen, (255, 255, 255), (px, py, PREVIEW_W, PREVIEW_H), 2)
 
+            # 只有 RUN 状态才在预览框外显示三行信息
+            if state == "RUN":
                 info1 = font.render(f"label: {str(last_label)} ({last_conf:.2f})", True, (255, 255, 255))
                 info2 = font.render(f"action: {action_name(st['last_action'])}", True, (255, 255, 255))
-                info3 = font.render(f"quit_ok: {allow_quit}", True, (180, 180, 180))
+                info3 = font.render(f"quit ok: {allow_quit}", True, (180, 180, 180))
                 screen.blit(info1, (px, py - 60))
                 screen.blit(info2, (px, py - 40))
                 screen.blit(info3, (px, py - 20))
 
-            # 文案提示
+            # 中间提示（WAIT/OVER），不与右侧文字冲突
             if state == "WAIT_START":
-                msg = big_font.render("Show 'OK' to start", True, (255, 255, 0))
-                screen.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT // 2 - 20))
-                tip = font.render("STOP = ship stop (game continues)", True, (255, 255, 255))
-                screen.blit(tip, (WIDTH // 2 - tip.get_width() // 2, HEIGHT // 2 + 18))
+                lines = [
+                    (big_font, "Show 'OK' to start", (255, 255, 0)),
+                    (font, "Show 'FIST' to quit", (200, 200, 200)),
+                ]
+                # 把提示放在屏幕中下方，但高于预览框
+                safe_bottom = py - 30
+                top_y = max(140, safe_bottom - 120)
+                draw_center_lines(screen, lines, WIDTH // 2, top_y, gap=8)
 
             elif state == "GAME_OVER":
-                msg = big_font.render("GAME OVER", True, (255, 255, 0))
-                screen.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT // 2 - 50))
-                msg2 = font.render(f"Final Score: {st['score']}", True, (255, 255, 255))
-                screen.blit(msg2, (WIDTH // 2 - msg2.get_width() // 2, HEIGHT // 2 - 10))
-                msg3 = font.render("Show 'OK' to play again", True, (255, 255, 255))
-                screen.blit(msg3, (WIDTH // 2 - msg3.get_width() // 2, HEIGHT // 2 + 20))
-                msg4 = font.render("FIST quits only when ship STOP", True, (200, 200, 200))
-                screen.blit(msg4, (WIDTH // 2 - msg4.get_width() // 2, HEIGHT // 2 + 45))
+                lines = [
+                    (big_font, "GAME OVER", (255, 255, 0)),
+                    (font, f"Final Score: {st['score']}", (255, 255, 255)),
+                    (font, "Show 'OK' to play again", (255, 255, 255)),
+                    (font, "Show 'FIST' to quit", (200, 200, 200)),
+                ]
+                safe_bottom = py - 30
+                top_y = max(130, safe_bottom - 150)
+                draw_center_lines(screen, lines, WIDTH // 2, top_y, gap=8)
 
             pygame.display.flip()
 
     cap.release()
     pygame.quit()
     sys.exit()
+
 
 if __name__ == "__main__":
     main()
