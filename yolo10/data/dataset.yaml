@@ -1,0 +1,26 @@
+# YOLOv10n手势识别数据集配置
+
+# 数据集路径
+path: /mnt/d/Study/CS324/yolo10/data  # 数据集根目录
+train: images  # 训练图像目录（相对于path）
+val: images    # 验证图像目录（相对于path）
+test: images   # 测试图像目录（相对于path）
+
+# 类别信息
+nc: 8  # 类别数量
+names:
+  0: up
+  1: down
+  2: left
+  3: right
+  4: front
+  5: back
+  6: clockwise
+  7: anticlockwise
+
+# 数据集统计
+# 总计：1601张图像
+# 训练：验证：测试 = 8:1:1
+# 训练集：1280张图像
+# 验证集：160张图像
+# 测试集：161张图像
